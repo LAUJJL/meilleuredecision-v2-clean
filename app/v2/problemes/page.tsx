@@ -1,8 +1,10 @@
+// app/v2/problemes/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
-type ProblemStatus = "draft" | "in_progress" | "done";
+type ProblemStatus = "draft" | "done";
 
 type ProblemLite = {
   id: string;
@@ -12,8 +14,14 @@ type ProblemLite = {
   updatedAt: number;
 };
 
-const LS_V2_PROBLEMS_KEY = "md_v2_problems";
-const LS_V2_CURRENT_PROBLEM_ID_KEY = "md_v2_current_problem_id";
+const LS_V2_PROBLEMS_KEY = "md_v2_problemes";
+const LS_V2_CURRENT_PROBLEM_ID = "md_v2_current_problem_id";
+
+const LS_V2_VISIONS_KEY = "md_v2_visions";
+const LS_V2_CURRENT_VISION_ID = "md_v2_current_vision_id";
+
+const defKey = (id: string) => `md_v2_probleme_def_${id}`;
+const visionDefKey = (problemId: string, visionId: string) => `md_v2_vision_def_${problemId}_${visionId}`;
 
 function safeParse<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -25,43 +33,75 @@ function safeParse<T>(raw: string | null, fallback: T): T {
 }
 
 function uid() {
-  return Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36);
+  return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
 }
 
-export default function V2ProblemesPage() {
-  const [problems, setProblems] = useState<ProblemLite[]>([]);
-  const [name, setName] = useState("");
+function loadProblems(): ProblemLite[] {
+  const list = safeParse<ProblemLite[]>(localStorage.getItem(LS_V2_PROBLEMS_KEY), []);
+  return (Array.isArray(list) ? list : [])
+    .map((p) => ({
+      id: typeof p?.id === "string" ? p.id : uid(),
+      nomCourt: typeof p?.nomCourt === "string" ? p.nomCourt : "",
+      status: p?.status === "done" ? "done" : "draft",
+      createdAt: typeof p?.createdAt === "number" ? p.createdAt : Date.now(),
+      updatedAt: typeof p?.updatedAt === "number" ? p.updatedAt : Date.now(),
+    }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
 
-  const [showGuidedHelp, setShowGuidedHelp] = useState(false);
-  const [showFreeHelp, setShowFreeHelp] = useState(false);
+function saveProblems(list: ProblemLite[]) {
+  localStorage.setItem(LS_V2_PROBLEMS_KEY, JSON.stringify(list));
+}
+
+type HelpMode = "none" | "guided1" | "guided2" | "guided3" | "free";
+
+export default function V2ProblemesPage() {
+  const [ready, setReady] = useState(false);
+  const [problems, setProblems] = useState<ProblemLite[]>([]);
+  const [newName, setNewName] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const [helpMode, setHelpMode] = useState<HelpMode>("none");
+
+  useEffect(() => {
+    setProblems(loadProblems());
+    setReady(true);
+  }, []);
 
   const styles = useMemo(
     () => ({
       page: {
         padding: 40,
-        maxWidth: 1050,
+        maxWidth: 980,
         margin: "0 auto",
         fontFamily: "system-ui, sans-serif",
         lineHeight: 1.45,
       } as const,
 
-      topBar: {
-        display: "flex",
-        justifyContent: "space-between",
+      // En-tête sur 2 lignes
+      topbar: {
+        display: "grid",
+        gridTemplateColumns: "1fr auto 1fr",
         alignItems: "center",
-        gap: 12,
+        gap: 16,
+        marginBottom: 8,
+      } as const,
+      leftNav: { display: "flex", justifyContent: "flex-start", gap: 12, alignItems: "center" } as const,
+      centerHelpRow1: { display: "flex", justifyContent: "center", gap: 12, alignItems: "center" } as const,
+      rightNav: { display: "flex", justifyContent: "flex-end", gap: 12, alignItems: "center" } as const,
+
+      topbarRow2: {
+        display: "grid",
+        gridTemplateColumns: "1fr auto 1fr",
+        alignItems: "center",
+        gap: 16,
         marginBottom: 18,
       } as const,
+      centerHelpRow2: { display: "flex", justifyContent: "center", gap: 12, alignItems: "center" } as const,
 
-      leftTop: {
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-      } as const,
-
-      btnGreen: {
+      btnGreenNav: {
         display: "inline-block",
-        padding: "12px 18px",
+        padding: "10px 16px",
         borderRadius: 12,
         border: "0",
         backgroundColor: "#2e7d32",
@@ -72,231 +112,299 @@ export default function V2ProblemesPage() {
         whiteSpace: "nowrap",
       } as const,
 
-      btnToggle: (active: boolean) =>
-        ({
-          display: "inline-block",
-          padding: "12px 18px",
-          borderRadius: 12,
-          border: active ? "2px solid #1976d2" : "1px solid #d9d9d9",
-          backgroundColor: active ? "#eaf2ff" : "#fff",
-          color: "#1b1b1b",
-          fontSize: 16,
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-        }) as const,
+      btnBlue: {
+        display: "inline-block",
+        padding: "10px 16px",
+        borderRadius: 12,
+        border: "1px solid #1976d2",
+        backgroundColor: "#1976d2",
+        color: "#fff",
+        textDecoration: "none",
+        fontSize: 16,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      } as const,
+
+      btnGhost: {
+        display: "inline-block",
+        padding: "10px 16px",
+        borderRadius: 12,
+        border: "1px solid #cfcfcf",
+        backgroundColor: "#fff",
+        color: "#111",
+        textDecoration: "none",
+        fontSize: 16,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      } as const,
+
+      h1: { fontSize: 28, margin: "10px 0 6px" } as const,
+      muted: { color: "#666" } as const,
 
       card: {
         border: "1px solid #e6e6e6",
-        borderRadius: 14,
-        padding: 16,
-        background: "#fafafa",
-        marginTop: 10,
+        borderRadius: 16,
+        padding: 18,
+        marginTop: 18,
       } as const,
-
-      title: { margin: "0 0 10px 0", fontSize: 22 } as const,
-
-      list: { display: "flex", flexDirection: "column", gap: 12, marginTop: 12 } as const,
 
       row: {
         display: "flex",
         justifyContent: "space-between",
-        gap: 12,
         alignItems: "center",
-        padding: 14,
-        borderRadius: 14,
-        border: "1px solid #eee",
-        background: "#fff",
+        gap: 12,
+        padding: "12px 0",
+        borderTop: "1px solid #eee",
       } as const,
 
-      rowTitle: { fontWeight: 800, fontSize: 18 } as const,
-      rowMeta: { color: "#666", marginTop: 2 } as const,
+      name: { fontSize: 18, fontWeight: 700 } as const,
+      status: { color: "#666" } as const,
 
-      rowActions: { display: "flex", gap: 10, alignItems: "center" } as const,
+      inputRow: {
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        marginTop: 14,
+      } as const,
 
-      btnPrimary: {
+      input: {
+        flex: 1,
+        padding: "12px 14px",
+        borderRadius: 12,
+        border: "1px solid #d8d8d8",
+        fontSize: 16,
+      } as const,
+
+      btnSmallBlue: {
         padding: "10px 14px",
-        borderRadius: 14,
+        borderRadius: 12,
         border: "0",
-        background: "#1976d2",
+        backgroundColor: "#1976d2",
         color: "#fff",
         cursor: "pointer",
         fontSize: 16,
         whiteSpace: "nowrap",
       } as const,
 
-      btnDanger: {
+      btnSmallRed: {
         padding: "10px 14px",
-        borderRadius: 14,
-        border: "1px solid #e74c3c",
-        background: "#fff",
-        color: "#e74c3c",
+        borderRadius: 12,
+        border: "1px solid #d32f2f",
+        backgroundColor: "#fff",
+        color: "#d32f2f",
         cursor: "pointer",
         fontSize: 16,
         whiteSpace: "nowrap",
       } as const,
 
-      form: { marginTop: 18, display: "flex", gap: 12, alignItems: "center" } as const,
-
-      input: {
-        flex: 1,
-        padding: "12px 12px",
-        borderRadius: 12,
-        border: "1px solid #ddd",
-        fontSize: 16,
-      } as const,
-
       help: {
-        marginTop: 12,
-        padding: 12,
+        marginTop: 14,
+        padding: 14,
         borderRadius: 12,
-        border: "1px solid #e6e6e6",
-        background: "#fff",
-        color: "#333",
+        background: "#f6f7fb",
+        border: "1px solid #e2e6ff",
+        whiteSpace: "pre-wrap",
       } as const,
-
-      small: { marginTop: 10, color: "#666", fontSize: 14 } as const,
     }),
     []
   );
 
-  useEffect(() => {
-    const list = safeParse<ProblemLite[]>(localStorage.getItem(LS_V2_PROBLEMS_KEY), []);
-    setProblems(list);
-  }, []);
-
-  function persist(list: ProblemLite[]) {
-    setProblems(list);
-    localStorage.setItem(LS_V2_PROBLEMS_KEY, JSON.stringify(list));
+  function setCurrentProblem(id: string) {
+    localStorage.setItem(LS_V2_CURRENT_PROBLEM_ID, id);
   }
 
   function createProblem() {
-    const n = name.trim();
-    if (!n) return;
-
+    setMsg(null);
+    const nom = newName.trim();
+    if (!nom) {
+      setMsg("Veuillez saisir un nom court.");
+      return;
+    }
     const now = Date.now();
-    const p: ProblemLite = {
-      id: uid(),
-      nomCourt: n,
-      status: "draft",
-      createdAt: now,
-      updatedAt: now,
-    };
-
+    const p: ProblemLite = { id: uid(), nomCourt: nom, status: "draft", createdAt: now, updatedAt: now };
     const next = [p, ...problems];
-    persist(next);
-    setName("");
+    setProblems(next);
+    saveProblems(next);
+    setNewName("");
+    setCurrentProblem(p.id);
   }
 
   function deleteProblem(id: string) {
+    setMsg(null);
+
+    const ok = confirm(
+      "Supprimer ce problème ?\n\n" +
+        "Cela effacera aussi toutes ses visions et tous leurs raffinements (R1, R2, R3...).\n\n" +
+        "Cette action est irréversible."
+    );
+    if (!ok) return;
+
+    // 1) Supprimer le problème de la liste
     const next = problems.filter((p) => p.id !== id);
-    persist(next);
+    setProblems(next);
+    saveProblems(next);
 
-    const current = localStorage.getItem(LS_V2_CURRENT_PROBLEM_ID_KEY);
-    if (current === id) localStorage.removeItem(LS_V2_CURRENT_PROBLEM_ID_KEY);
+    // 2) Supprimer la définition du problème
+    localStorage.removeItem(defKey(id));
+
+    // 3) Supprimer toutes les visions de ce problème + leurs defs (qui contiennent aussi les raffinements)
+    const allVisions = safeParse<any[]>(localStorage.getItem(LS_V2_VISIONS_KEY), []);
+    const visionsArray = Array.isArray(allVisions) ? allVisions : [];
+
+    const visionsToDelete = visionsArray.filter((v) => v?.problemId === id);
+    const remainingVisions = visionsArray.filter((v) => v?.problemId !== id);
+
+    for (const v of visionsToDelete) {
+      if (typeof v?.id === "string") {
+        // efface la vision_def => efface aussi formal.r1/r2/r3...
+        localStorage.removeItem(visionDefKey(id, v.id));
+
+        // nettoyage de la vision courante
+        if (localStorage.getItem(LS_V2_CURRENT_VISION_ID) === v.id) {
+          localStorage.removeItem(LS_V2_CURRENT_VISION_ID);
+        }
+      }
+    }
+
+    // Mettre à jour la liste globale des visions
+    localStorage.setItem(LS_V2_VISIONS_KEY, JSON.stringify(remainingVisions));
+
+    // 4) Nettoyer le problème courant si besoin
+    if (localStorage.getItem(LS_V2_CURRENT_PROBLEM_ID) === id) {
+      localStorage.removeItem(LS_V2_CURRENT_PROBLEM_ID);
+    }
   }
 
-  function openProblem(p: ProblemLite) {
-    localStorage.setItem(LS_V2_CURRENT_PROBLEM_ID_KEY, p.id);
-    window.location.href = `/v2/probleme?problemId=${encodeURIComponent(p.id)}`;
+  function statusLabel(p: ProblemLite) {
+    const def = safeParse<any>(localStorage.getItem(defKey(p.id)), null);
+    const isDone = Boolean(def?.validatedText);
+    return isDone ? "Validé" : "Brouillon";
   }
+
+  const helpText = useMemo(() => {
+    if (helpMode === "none") return null;
+
+    if (helpMode === "guided1") {
+      return `PROBLÈME GUIDÉ 1 (exemple)
+But : montrer comment V2 marche avec un problème “trésorerie + seuil + horizon”.
+Dans la page suivante (définition), écrivez un texte libre qui mentionne :
+- Trésorerie initiale (montant + unité)
+- Seuil minimal de trésorerie à respecter
+- Horizon d’observation (ex : 10 ans)
+- (Optionnel) un objectif (ex : doubler un revenu en X ans)
+Aucun champ n’est prérempli : vous tapez exactement comme en mode libre.`;
+    }
+
+    if (helpMode === "free") {
+      return `AIDE LIBRE
+Écrivez votre problème en texte libre, avec des quantités mesurables si possible :
+- grandeurs surveillées (stocks), flux, horizon
+- unités (€, €/an, kg, etc.)
+- contraintes éventuelles (seuil, délai)
+Vous pourrez ensuite corriger grâce aux retours du site.`;
+    }
+
+    if (helpMode === "guided2") {
+      return `PROBLÈME GUIDÉ 2 (réservé)
+Vous compléterez plus tard ce texte d’aide (quoi écrire).`;
+    }
+
+    return `PROBLÈME GUIDÉ 3 (réservé)
+Vous compléterez plus tard ce texte d’aide (quoi écrire).`;
+  }, [helpMode]);
+
+  function toggle(mode: HelpMode) {
+    setHelpMode((cur) => (cur === mode ? "none" : mode));
+  }
+
+  if (!ready) return null;
 
   return (
     <main style={styles.page}>
-      <div style={styles.topBar}>
-        <div style={styles.leftTop}>
-          <a href="/" style={styles.btnGreen}>
-            ← Retour à l’accueil
-          </a>
+      {/* Ligne 1 */}
+      <div style={styles.topbar}>
+        <div style={styles.leftNav}>
+          <Link href="/" style={styles.btnGreenNav}>
+            Accueil
+          </Link>
 
-          <button
-            type="button"
-            style={styles.btnToggle(showGuidedHelp)}
-            onClick={() => {
-              setShowGuidedHelp((v) => !v);
-              setShowFreeHelp(false);
-            }}
-          >
-            Mode guidé
+          <span style={{ color: "#666" }}>Liste des problèmes</span>
+        </div>
+
+        <div style={styles.centerHelpRow1}>
+          <button style={helpMode === "guided1" ? styles.btnBlue : styles.btnGhost} onClick={() => toggle("guided1")}>
+            Problème guidé 1
           </button>
-
-          <button
-            type="button"
-            style={styles.btnToggle(showFreeHelp)}
-            onClick={() => {
-              setShowFreeHelp((v) => !v);
-              setShowGuidedHelp(false);
-            }}
-          >
-            Mode libre
+          <button style={helpMode === "free" ? styles.btnBlue : styles.btnGhost} onClick={() => toggle("free")}>
+            Aide libre
           </button>
         </div>
 
+        <div style={styles.rightNav}>{/* Sur cette page, pas de “précédente/suivante” */}</div>
+      </div>
+
+      {/* Ligne 2 */}
+      <div style={styles.topbarRow2}>
+        <div />
+        <div style={styles.centerHelpRow2}>
+          <button style={helpMode === "guided2" ? styles.btnBlue : styles.btnGhost} onClick={() => toggle("guided2")}>
+            Problème guidé 2
+          </button>
+          <button style={helpMode === "guided3" ? styles.btnBlue : styles.btnGhost} onClick={() => toggle("guided3")}>
+            Problème guidé 3
+          </button>
+        </div>
         <div />
       </div>
 
-      <div style={styles.card}>
-        <div style={styles.title}>Liste des problèmes</div>
+      <h1 style={styles.h1}>Liste des problèmes (V2)</h1>
+      {msg ? <div style={{ marginTop: 10, color: "#b00020" }}>{msg}</div> : null}
 
-        {showGuidedHelp && (
-          <div style={styles.help}>
-            <strong>Mode guidé (V2)</strong>
-            <div style={{ marginTop: 6 }}>
-              Le site vous guidera pas à pas. Il vous proposera un exemple de formulation et vous aidera à corriger les
-              imprécisions.
-            </div>
-          </div>
-        )}
+      {helpText ? <div style={styles.help}>{helpText}</div> : null}
 
-        {showFreeHelp && (
-          <div style={styles.help}>
-            <strong>Mode libre (V2)</strong>
-            <div style={{ marginTop: 6 }}>
-              Vous écrivez librement votre définition. Le site reformule et signale les manques, puis vous validez.
-            </div>
-          </div>
-        )}
+      <section style={styles.card}>
+        <h2 style={{ margin: 0 }}>Mes problèmes</h2>
+        <div style={styles.muted}>Créer, ouvrir, supprimer. (“Brouillon” = définition V2 pas encore validée.)</div>
 
-        <div style={styles.list}>
-          {problems.length === 0 ? (
-            <div style={{ color: "#666", marginTop: 10 }}>Aucun problème pour l’instant.</div>
-          ) : (
-            problems.map((p) => {
-              const s = p.status === "draft" ? "Brouillon" : p.status === "in_progress" ? "En cours" : "Terminé";
-              return (
-                <div key={p.id} style={styles.row}>
-                  <div>
-                    <div style={styles.rowTitle}>{p.nomCourt}</div>
-                    <div style={styles.rowMeta}>{s}</div>
-                  </div>
-
-                  <div style={styles.rowActions}>
-                    <button type="button" style={styles.btnPrimary} onClick={() => openProblem(p)}>
-                      Ouvrir →
-                    </button>
-                    <button type="button" style={styles.btnDanger} onClick={() => deleteProblem(p.id)}>
-                      Supprimer
-                    </button>
-                  </div>
+        {problems.length === 0 ? (
+          <div style={{ marginTop: 12, color: "#666" }}>Aucun problème pour l’instant.</div>
+        ) : (
+          <div style={{ marginTop: 10 }}>
+            {problems.map((p) => (
+              <div key={p.id} style={styles.row}>
+                <div>
+                  <div style={styles.name}>{p.nomCourt}</div>
+                  <div style={styles.status}>{statusLabel(p)}</div>
                 </div>
-              );
-            })
-          )}
-        </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <Link
+                    href={`/v2/probleme?problemId=${encodeURIComponent(p.id)}`}
+                    style={styles.btnSmallBlue}
+                    onClick={() => setCurrentProblem(p.id)}
+                  >
+                    Ouvrir →
+                  </Link>
+                  <button style={styles.btnSmallRed} onClick={() => deleteProblem(p.id)}>
+                    Supprimer
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
-        <div style={styles.form}>
+        <div style={styles.inputRow}>
           <input
             style={styles.input}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
             placeholder="Nom court du nouveau problème"
           />
-          <button type="button" style={styles.btnPrimary} onClick={createProblem}>
+          <button style={styles.btnSmallBlue} onClick={createProblem}>
             Créer
           </button>
         </div>
-
-        <div style={styles.small}>“Brouillon” signifie : problème créé, mais définition V2 pas encore validée.</div>
-      </div>
+      </section>
     </main>
   );
 }

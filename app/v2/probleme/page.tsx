@@ -1,491 +1,645 @@
+// app/v2/probleme/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 
-type ProblemStatus = "draft" | "in_progress" | "done";
+/* ---------------------------------------------------------
+   Helpers
+--------------------------------------------------------- */
 
-type ProblemLite = {
-  id: string;
-  nomCourt: string;
-  status: ProblemStatus;
-  createdAt: number;
-  updatedAt: number;
-};
-
-type V2ProblemData = {
-  problemText?: string;
-  reformulationText?: string | null;
-  formalProblem?: any | null;
-  manques?: any | null;
-  accepted?: boolean;
-};
-
-const LS_V2_PROBLEMS_KEY = "md_v2_problems";
-const LS_V2_CURRENT_PROBLEM_ID_KEY = "md_v2_current_problem_id";
-const LS_V2_PROBLEM_DATA_PREFIX = "md_v2_problem_data__"; // + problemId
-
-function safeParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
+function countWords(s: string) {
+  return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
-function getQueryParam(name: string): string | null {
-  if (typeof window === "undefined") return null;
-  const url = new URL(window.location.href);
-  return url.searchParams.get(name);
+function textLooksTooWeak(t: string) {
+  const minChars = 80;
+  const minWords = 15;
+  return t.length < minChars || countWords(t) < minWords;
 }
+
+type Status = "" | "GLOBAL_CONST" | "VISION_PARAM" | "VISION_KNOB";
+
+type FieldWithStatus = {
+  value: string;
+  status: Status;
+};
+
+type ProblemForm = {
+  salaireActuel: FieldWithStatus;
+  capitalInitial: FieldWithStatus;
+  objectifDoublement: { value: boolean; status: Status };
+  horizonAns: FieldWithStatus;
+};
+
+type SavedProblemPayload = {
+  validatedText: string;
+  comment?: string | null;
+  form: ProblemForm;
+  refusalReason?: string | null;
+  validatedAt?: string;
+};
+
+function problemStorageKey(problemId: string) {
+  return `md_v2_problem_${problemId}`;
+}
+
+/* ---------------------------------------------------------
+   Page
+--------------------------------------------------------- */
 
 export default function V2ProblemePage() {
+  const router = useRouter();
+  const sp = useSearchParams();
+  const problemId = sp.get("problemId") || "new";
+
   const [ready, setReady] = useState(false);
 
-  const [problemId, setProblemId] = useState<string | null>(null);
-  const [problem, setProblem] = useState<ProblemLite | null>(null);
-
+  // Texte libre
   const [draft, setDraft] = useState("");
-  const [reformulation, setReformulation] = useState<string | null>(null);
-  const [formal, setFormal] = useState<any | null>(null);
-  const [manques, setManques] = useState<any | null>(null);
+  const [comment, setComment] = useState("");
 
-  const [step, setStep] = useState<"edit" | "review" | "done">("edit");
-  const [loading, setLoading] = useState(false);
-  const [errMsg, setErrMsg] = useState<string | null>(null);
+  // Messages système
+  const [remarks, setRemarks] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
 
-  // Option B : pas de mémorisation. Ces boutons ne font qu’afficher un texte d’aide sur cette page.
-  const [showGuidedHelp, setShowGuidedHelp] = useState(false);
-  const [showFreeHelp, setShowFreeHelp] = useState(false);
+  // Formulaire proposé
+  const [formProposed, setFormProposed] = useState<ProblemForm | null>(null);
 
-  const debug = useMemo(() => getQueryParam("debug") === "1", []);
+  // Acceptation obligatoire
+  const [formAccepted, setFormAccepted] = useState(false);
 
-  const styles = useMemo(
-    () => ({
-      page: {
-        padding: 40,
-        maxWidth: 980,
-        margin: "0 auto",
-        fontFamily: "system-ui, sans-serif",
-        lineHeight: 1.45,
-      } as const,
+  // Refus du formulaire
+  const [formRefused, setFormRefused] = useState(false);
+  const [refusalReason, setRefusalReason] = useState("");
 
-      topBar: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: 12,
-        marginBottom: 18,
-      } as const,
+  // État validé
+  const [alreadyValidated, setAlreadyValidated] = useState(false);
+  const [validatedPayload, setValidatedPayload] =
+    useState<SavedProblemPayload | null>(null);
 
-      leftTop: { display: "flex", alignItems: "center", gap: 12 } as const,
-      rightTop: { display: "flex", alignItems: "center", gap: 12 } as const,
-
-      btnGray: {
-        display: "inline-block",
-        padding: "12px 18px",
-        borderRadius: 12,
-        border: "1px solid #d9d9d9",
-        background: "#fff",
-        color: "#111",
-        textDecoration: "none",
-        fontSize: 16,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-      } as const,
-
-      btnBlue: (disabled: boolean) =>
-        ({
-          display: "inline-block",
-          padding: "12px 18px",
-          borderRadius: 12,
-          border: "0",
-          backgroundColor: disabled ? "#9bbbe5" : "#1976d2",
-          color: "#fff",
-          textDecoration: "none",
-          fontSize: 16,
-          cursor: disabled ? "not-allowed" : "pointer",
-          whiteSpace: "nowrap",
-        }) as const,
-
-      btnToggle: (active: boolean) =>
-        ({
-          display: "inline-block",
-          padding: "12px 18px",
-          borderRadius: 12,
-          border: active ? "2px solid #1976d2" : "1px solid #d9d9d9",
-          backgroundColor: active ? "#eaf2ff" : "#fff",
-          color: "#1b1b1b",
-          fontSize: 16,
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-        }) as const,
-
-      title: { margin: "0 0 6px 0", fontSize: 22 } as const,
-      subtitle: { margin: "0 0 18px 0", color: "#444" } as const,
-
-      card: {
-        border: "1px solid #e6e6e6",
-        borderRadius: 14,
-        padding: 16,
-        background: "#fafafa",
-        marginTop: 12,
-      } as const,
-
-      label: { fontWeight: 700, marginBottom: 8 } as const,
-
-      textarea: {
-        width: "100%",
-        minHeight: 180,
-        resize: "vertical" as const,
-        padding: 12,
-        borderRadius: 12,
-        border: "1px solid #ddd",
-        fontSize: 16,
-      } as const,
-
-      actions: { display: "flex", gap: 12, marginTop: 14, alignItems: "center" } as const,
-
-      warn: {
-        background: "#fff3cd",
-        border: "1px solid #ffe69c",
-        borderRadius: 12,
-        padding: 12,
-        marginTop: 10,
-        color: "#5c4a00",
-      } as const,
-
-      ok: {
-        background: "#e9f7ef",
-        border: "1px solid #b7e3c7",
-        borderRadius: 12,
-        padding: 12,
-        marginTop: 10,
-        color: "#0a5f2b",
-      } as const,
-
-      help: {
-        marginTop: 10,
-        padding: 12,
-        borderRadius: 12,
-        border: "1px solid #e6e6e6",
-        background: "#fff",
-        color: "#333",
-      } as const,
-
-      mono: {
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-        fontSize: 13,
-        whiteSpace: "pre-wrap" as const,
-      } as const,
-    }),
-    []
-  );
-
-  function loadProblemList(): ProblemLite[] {
-    return safeParse<ProblemLite[]>(localStorage.getItem(LS_V2_PROBLEMS_KEY), []);
-  }
-
-  function saveProblemList(list: ProblemLite[]) {
-    localStorage.setItem(LS_V2_PROBLEMS_KEY, JSON.stringify(list));
-  }
-
-  function updateProblemInList(nextProblem: ProblemLite) {
-    const list = loadProblemList();
-    const next = list.map((p) => (p.id === nextProblem.id ? nextProblem : p));
-    saveProblemList(next);
-  }
-
-  function dataKey(id: string) {
-    return `${LS_V2_PROBLEM_DATA_PREFIX}${id}`;
-  }
-
-  function loadData(id: string): V2ProblemData {
-    return safeParse<V2ProblemData>(localStorage.getItem(dataKey(id)), {});
-  }
-
-  function saveData(id: string, data: V2ProblemData) {
-    localStorage.setItem(dataKey(id), JSON.stringify(data));
-  }
-
+  /* ---------------------------------------------------------
+     Init : recharger si déjà validé
+  --------------------------------------------------------- */
   useEffect(() => {
-    const idFromQuery = getQueryParam("problemId");
-    const id = idFromQuery ?? localStorage.getItem(LS_V2_CURRENT_PROBLEM_ID_KEY);
+    const raw = localStorage.getItem(problemStorageKey(problemId));
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as SavedProblemPayload;
+        if (parsed?.validatedText && parsed?.form) {
+          setAlreadyValidated(true);
+          setValidatedPayload(parsed);
 
-    if (!id) {
-      window.location.href = "/v2/problemes";
-      return;
-    }
+          setDraft(parsed.validatedText);
+          setComment(parsed.comment ?? "");
 
-    localStorage.setItem(LS_V2_CURRENT_PROBLEM_ID_KEY, id);
-
-    const list = loadProblemList();
-    const p = list.find((x) => x.id === id) ?? null;
-
-    setProblemId(id);
-    setProblem(p);
-
-    const data = loadData(id);
-    const accepted = !!data.accepted;
-
-    setDraft(data.problemText ?? "");
-    setReformulation(data.reformulationText ?? null);
-    setFormal(data.formalProblem ?? null);
-    setManques(data.manques ?? null);
-
-    setStep(accepted ? "done" : "edit");
-    setReady(true);
-  }, []);
-
-  function saveDraft(nextText: string) {
-    setDraft(nextText);
-    if (!problemId) return;
-
-    const data = loadData(problemId);
-    saveData(problemId, { ...data, problemText: nextText });
-  }
-
-  function goBackList() {
-    window.location.href = "/v2/problemes";
-  }
-
-  function goNextPlaceholder() {
-    // Placeholder : à remplacer quand la "page suivante" existera (visions, etc.)
-    // window.location.href = `/v2/visions?problemId=${encodeURIComponent(problemId ?? "")}`;
-  }
-
-  async function askReformulate() {
-    setErrMsg(null);
-    const text = draft.trim();
-    if (!text) {
-      setErrMsg("Veuillez écrire une définition du problème (texte libre) avant de continuer.");
-      return;
-    }
-
-    if (!problemId || !problem) return;
-
-    setLoading(true);
-    try {
-      const res = await fetch("/api/v2/problem", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          stage: "reformulate_and_formalize",
-          user_text: text,
-          context: {
-            time_unit_preference: "annee",
-            time_index_convention: "1..N",
-          },
-          debug,
-        }),
-      });
-
-      if (!res.ok) {
-        const raw = await res.text();
-        throw new Error(raw || `HTTP ${res.status}`);
+          setFormProposed(parsed.form);
+          setFormAccepted(true);
+        }
+      } catch {
+        // ignore
       }
+    }
+    setReady(true);
+  }, [problemId]);
 
-      const json = await res.json();
+  /* ---------------------------------------------------------
+     Étape principale : proposer un formulaire (système minimal)
+  --------------------------------------------------------- */
+  async function proposeForm() {
+    setRemarks([]);
+    setFormProposed(null);
+    setFormAccepted(false);
+    setFormRefused(false);
+    setRefusalReason("");
 
-      const nextReformulation = (json.reformulation_text ?? null) as string | null;
-      const nextFormal = json.formal_problem ?? null;
-      const nextManques = json.manques ?? null;
+    const t = draft.trim();
+    if (!t) {
+      setRemarks(["Veuillez saisir une définition du problème."]);
+      return;
+    }
 
-      setReformulation(nextReformulation);
-      setFormal(nextFormal);
-      setManques(nextManques);
+    if (textLooksTooWeak(t)) {
+      setRemarks([
+        "Je ne peux pas construire un formulaire à partir de ce texte.",
+        "Ajoutez : objectif, horizon, chiffres, contraintes, options.",
+      ]);
+      return;
+    }
 
-      const data = loadData(problemId);
-      saveData(problemId, {
-        ...data,
-        problemText: text,
-        reformulationText: nextReformulation,
-        formalProblem: nextFormal,
-        manques: nextManques,
-        accepted: false,
-      });
+    setBusy(true);
+    try {
+      const proposed: ProblemForm = {
+        salaireActuel: { value: "", status: "" },
+        capitalInitial: { value: "", status: "" },
+        objectifDoublement: { value: true, status: "" },
+        horizonAns: { value: "", status: "" },
+      };
 
-      const now = Date.now();
-      const nextProblem: ProblemLite = { ...problem, status: "in_progress", updatedAt: now };
-      setProblem(nextProblem);
-      updateProblemInList(nextProblem);
+      setFormProposed(proposed);
 
-      setStep("review");
-    } catch (e: any) {
-      setErrMsg(e?.message ?? "Erreur inconnue");
+      setRemarks([
+        "Formulaire proposé : vérifiez et complétez les champs.",
+        "Choisir un statut est optionnel : si vous ne savez pas, laissez vide.",
+        "Si vous choisissez un statut, vous ajoutez une précision qui guidera la suite du parcours.",
+      ]);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
-  function accept() {
-    if (!problemId || !problem) return;
+  /* ---------------------------------------------------------
+     Validation finale
+  --------------------------------------------------------- */
+  function validate() {
+    if (alreadyValidated) return;
+    if (!formProposed) return;
 
-    const data = loadData(problemId);
-    saveData(problemId, { ...data, accepted: true });
+    if (!formAccepted) {
+      setRemarks(["Vous devez accepter le formulaire avant validation."]);
+      return;
+    }
 
-    const now = Date.now();
-    const nextProblem: ProblemLite = { ...problem, status: "in_progress", updatedAt: now };
-    setProblem(nextProblem);
-    updateProblemInList(nextProblem);
+    const payload: SavedProblemPayload = {
+      validatedText: draft.trim(),
+      comment: comment.trim() || null,
+      form: formProposed,
+      refusalReason: formRefused ? refusalReason.trim() || null : null,
+      validatedAt: new Date().toISOString(),
+    };
 
-    setStep("done");
+    localStorage.setItem(problemStorageKey(problemId), JSON.stringify(payload));
+
+    setAlreadyValidated(true);
+    setValidatedPayload(payload);
+
+    router.push(`/v2/visions?problemId=${encodeURIComponent(problemId)}`);
   }
 
-  function backToEdit() {
-    setStep("edit");
+  /* ---------------------------------------------------------
+     Navigation fixe
+  --------------------------------------------------------- */
+  function goPrev() {
+    router.push("/v2/problemes");
+  }
+
+  function goNext() {
+    if (!alreadyValidated) return;
+    router.push(`/v2/visions?problemId=${encodeURIComponent(problemId)}`);
   }
 
   if (!ready) return null;
 
+  /* ---------------------------------------------------------
+     UI helpers
+  --------------------------------------------------------- */
+  function StatusSelect(props: {
+    value: Status;
+    disabled?: boolean;
+    onChange: (v: Status) => void;
+  }) {
+    const { value, disabled, onChange } = props;
+    return (
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value as Status)}
+        style={{ marginTop: 4, padding: 6, width: "100%" }}
+      >
+        <option value="">(vide) — Je ne sais pas / je ne précise pas</option>
+        <option value="GLOBAL_CONST">GLOBAL_CONST — invariant (problème)</option>
+        <option value="VISION_PARAM">VISION_PARAM — fixé par vision</option>
+        <option value="VISION_KNOB">VISION_KNOB — exploratoire (curseur)</option>
+      </select>
+    );
+  }
+
   return (
-    <main style={styles.page}>
-      <div style={styles.topBar}>
-        <div style={styles.leftTop}>
-          <a href="/v2/problemes" style={styles.btnGray}>
-            ← Retour à la liste
-          </a>
+    <main style={{ maxWidth: 980, margin: "0 auto", padding: 40 }}>
+      {/* Bandeau standard */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 20,
+        }}
+      >
+        <Link
+          href="/"
+          style={{
+            padding: "8px 14px",
+            borderRadius: 10,
+            background: "#2e7d32",
+            color: "#fff",
+            textDecoration: "none",
+            fontWeight: 700,
+          }}
+        >
+          Accueil
+        </Link>
 
+        <button
+          disabled
+          style={{
+            padding: "8px 14px",
+            borderRadius: 10,
+            background: "#9e9e9e",
+            color: "#fff",
+            border: 0,
+            fontWeight: 700,
+          }}
+        >
+          Aide
+        </button>
+
+        <div style={{ display: "flex", gap: 10 }}>
           <button
-            type="button"
-            style={styles.btnToggle(showGuidedHelp)}
-            onClick={() => {
-              setShowGuidedHelp((v) => !v);
-              setShowFreeHelp(false);
+            onClick={goPrev}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 10,
+              background: "#424242",
+              color: "#fff",
+              border: 0,
+              cursor: "pointer",
+              fontWeight: 700,
             }}
           >
-            Mode guidé
+            ← Page précédente
           </button>
 
           <button
-            type="button"
-            style={styles.btnToggle(showFreeHelp)}
-            onClick={() => {
-              setShowFreeHelp((v) => !v);
-              setShowGuidedHelp(false);
+            onClick={goNext}
+            disabled={!alreadyValidated}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 10,
+              background: alreadyValidated ? "#1976d2" : "#9e9e9e",
+              color: "#fff",
+              border: 0,
+              cursor: alreadyValidated ? "pointer" : "not-allowed",
+              fontWeight: 700,
             }}
           >
-            Mode libre
+            Page suivante →
           </button>
-        </div>
-
-        <div style={styles.rightTop}>
-          {step !== "done" ? (
-            <button type="button" style={styles.btnBlue(false)} onClick={goBackList}>
-              Revenir à la page précédente →
-            </button>
-          ) : (
-            <>
-              <button type="button" style={styles.btnBlue(false)} onClick={goBackList}>
-                Revenir à la page précédente →
-              </button>
-              <button type="button" style={styles.btnBlue(true)} disabled onClick={goNextPlaceholder}>
-                Aller à la page suivante →
-              </button>
-            </>
-          )}
         </div>
       </div>
 
-      <h1 style={styles.title}>V2 — Définition du problème</h1>
-      <p style={styles.subtitle}>
-        Problème : <strong>{problem?.nomCourt ?? "(sans nom)"}</strong>
-        {debug ? (
-          <>
-            {" "}
-            — <strong>debug=1</strong>
-          </>
+      <h1>V2 — Définition du problème</h1>
+
+      <div
+        style={{
+          marginTop: 12,
+          padding: 12,
+          borderRadius: 12,
+          background: "#fff7ed",
+          border: "1px solid #fdba74",
+          color: "#7c2d12",
+        }}
+      >
+        <strong>Important :</strong> rien n’est conservé tant que ce n’est pas
+        validé.
+        {alreadyValidated ? (
+          <div style={{ marginTop: 8 }}>
+            <strong>Définition validée :</strong> lecture seule.
+          </div>
         ) : null}
-      </p>
+      </div>
 
-      {showGuidedHelp && (
-        <div style={styles.help}>
-          <strong>Mode guidé (sur cette page)</strong>
-          <div style={{ marginTop: 6 }}>
-            Vous pouvez écrire une définition “imparfaite”. Le site reformule et signale les points manquants. Vous
-            corrigez autant de fois que nécessaire, puis vous validez.
-          </div>
+      {/* Texte libre */}
+      <div style={{ marginTop: 24 }}>
+        <label style={{ fontWeight: 700 }}>Votre définition (texte libre)</label>
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          disabled={alreadyValidated}
+          rows={8}
+          style={{
+            width: "100%",
+            marginTop: 8,
+            padding: 10,
+            opacity: alreadyValidated ? 0.85 : 1,
+          }}
+        />
+      </div>
+
+      {/* Commentaire */}
+      <div style={{ marginTop: 16 }}>
+        <label style={{ fontWeight: 700 }}>Commentaire (optionnel)</label>
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          disabled={alreadyValidated}
+          rows={3}
+          style={{
+            width: "100%",
+            marginTop: 8,
+            padding: 10,
+            opacity: alreadyValidated ? 0.85 : 1,
+          }}
+        />
+      </div>
+
+      {/* Bouton proposer formulaire */}
+      {!alreadyValidated && (
+        <div style={{ marginTop: 20 }}>
+          <button
+            onClick={proposeForm}
+            disabled={busy}
+            style={{
+              padding: "10px 16px",
+              borderRadius: 10,
+              background: "#1976d2",
+              color: "#fff",
+              border: 0,
+              cursor: busy ? "not-allowed" : "pointer",
+              fontWeight: 700,
+            }}
+          >
+            {busy ? "Construction…" : "Construire le mini-formulaire"}
+          </button>
         </div>
       )}
 
-      {showFreeHelp && (
-        <div style={styles.help}>
-          <strong>Mode libre (sur cette page)</strong>
-          <div style={{ marginTop: 6 }}>
-            Même principe, mais sans texte d’aide : vous écrivez librement, le site reformule, vous validez.
-          </div>
+      {/* Remarques */}
+      {remarks.length > 0 && (
+        <div
+          style={{
+            marginTop: 20,
+            padding: 12,
+            borderRadius: 12,
+            background: "#fff7ed",
+            border: "1px solid #fdba74",
+            color: "#7c2d12",
+          }}
+        >
+          <strong>Remarques</strong>
+          <ul style={{ marginTop: 8 }}>
+            {remarks.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
         </div>
       )}
 
-      {errMsg && <div style={styles.warn}>{errMsg}</div>}
+      {/* Formulaire proposé */}
+      {!alreadyValidated && formProposed && (
+        <div style={{ marginTop: 24 }}>
+          <h3>Mini-formulaire (définition formelle)</h3>
 
-      {step === "edit" && (
-        <div style={styles.card}>
-          <div style={styles.label}>Votre définition (texte libre)</div>
-          <textarea
-            style={styles.textarea}
-            value={draft}
-            onChange={(e) => saveDraft(e.target.value)}
-            placeholder="Écrivez librement votre problème… (vous pourrez corriger après la reformulation)"
-          />
+          <div
+            style={{
+              padding: 14,
+              borderRadius: 12,
+              background: "#f0fdf4",
+              border: "1px solid #86efac",
+            }}
+          >
+            <div style={{ marginBottom: 10 }}>
+              <strong>Statut (optionnel)</strong> : si vous ne savez pas, laissez
+              “vide”. Choisir un statut ajoute une précision qui guidera la suite.
+            </div>
 
-          <div style={styles.actions}>
-            <button type="button" onClick={askReformulate} style={styles.btnBlue(loading)} disabled={loading}>
-              {loading ? "Analyse en cours…" : "Analyser → (reformulation)"}
-            </button>
-          </div>
-        </div>
-      )}
+            <label style={{ fontWeight: 700 }}>Salaire actuel</label>
+            <input
+              value={formProposed.salaireActuel.value}
+              onChange={(e) =>
+                setFormProposed({
+                  ...formProposed,
+                  salaireActuel: { ...formProposed.salaireActuel, value: e.target.value },
+                })
+              }
+              style={{ width: "100%", marginTop: 4, padding: 6 }}
+              placeholder="ex : 80000 €/an"
+            />
+            <StatusSelect
+              value={formProposed.salaireActuel.status}
+              onChange={(v) =>
+                setFormProposed({
+                  ...formProposed,
+                  salaireActuel: { ...formProposed.salaireActuel, status: v },
+                })
+              }
+            />
 
-      {step === "review" && (
-        <>
-          <div style={styles.card}>
-            <div style={{ fontWeight: 800, marginBottom: 8 }}>Reformulation proposée</div>
-            <div>{reformulation ?? "(aucune reformulation reçue)"}</div>
+            <hr style={{ margin: "16px 0" }} />
 
-            {manques ? (
-              <div style={{ marginTop: 12, color: "#666" }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Points manquants / incertains</div>
-                <pre style={styles.mono}>{JSON.stringify(manques, null, 2)}</pre>
+            <label style={{ fontWeight: 700 }}>Capital initial</label>
+            <input
+              value={formProposed.capitalInitial.value}
+              onChange={(e) =>
+                setFormProposed({
+                  ...formProposed,
+                  capitalInitial: { ...formProposed.capitalInitial, value: e.target.value },
+                })
+              }
+              style={{ width: "100%", marginTop: 4, padding: 6 }}
+              placeholder="ex : 300000 €"
+            />
+            <StatusSelect
+              value={formProposed.capitalInitial.status}
+              onChange={(v) =>
+                setFormProposed({
+                  ...formProposed,
+                  capitalInitial: { ...formProposed.capitalInitial, status: v },
+                })
+              }
+            />
+
+            <hr style={{ margin: "16px 0" }} />
+
+            <label style={{ fontWeight: 700 }}>
+              Objectif : doubler le salaire
+            </label>
+            <div style={{ marginTop: 6 }}>
+              <input
+                type="checkbox"
+                checked={formProposed.objectifDoublement.value}
+                onChange={(e) =>
+                  setFormProposed({
+                    ...formProposed,
+                    objectifDoublement: {
+                      ...formProposed.objectifDoublement,
+                      value: e.target.checked,
+                    },
+                  })
+                }
+              />{" "}
+              Oui
+            </div>
+            <StatusSelect
+              value={formProposed.objectifDoublement.status}
+              onChange={(v) =>
+                setFormProposed({
+                  ...formProposed,
+                  objectifDoublement: { ...formProposed.objectifDoublement, status: v },
+                })
+              }
+            />
+
+            <hr style={{ margin: "16px 0" }} />
+
+            <label style={{ fontWeight: 700 }}>Horizon (années)</label>
+            <input
+              value={formProposed.horizonAns.value}
+              onChange={(e) =>
+                setFormProposed({
+                  ...formProposed,
+                  horizonAns: { ...formProposed.horizonAns, value: e.target.value },
+                })
+              }
+              style={{ width: "100%", marginTop: 4, padding: 6 }}
+              placeholder="ex : 4"
+            />
+            <StatusSelect
+              value={formProposed.horizonAns.status}
+              onChange={(v) =>
+                setFormProposed({
+                  ...formProposed,
+                  horizonAns: { ...formProposed.horizonAns, status: v },
+                })
+              }
+            />
+
+            <hr style={{ margin: "16px 0" }} />
+
+            {/* Acceptation obligatoire */}
+            <label>
+              <input
+                type="checkbox"
+                checked={formAccepted}
+                onChange={(e) => setFormAccepted(e.target.checked)}
+              />{" "}
+              J’accepte ce mini-formulaire comme définition formelle.
+            </label>
+
+            {/* Refus */}
+            {!formAccepted && (
+              <div style={{ marginTop: 12 }}>
+                <button
+                  onClick={() => setFormRefused(true)}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #ccc",
+                    background: "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  Ce formulaire ne correspond pas
+                </button>
               </div>
-            ) : null}
+            )}
+
+            {formRefused && (
+              <div style={{ marginTop: 12 }}>
+                <strong>Pourquoi ? (texte court)</strong>
+                <textarea
+                  value={refusalReason}
+                  onChange={(e) => setRefusalReason(e.target.value)}
+                  rows={3}
+                  style={{ width: "100%", marginTop: 6, padding: 8 }}
+                  placeholder="Expliquez brièvement ce qui ne correspond pas."
+                />
+    {/* Actions après refus */}
+<div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+  <button
+    onClick={() => {
+      setRemarks([
+        "Formulaire refusé : corrigez votre texte puis relancez la construction du formulaire.",
+      ]);
+
+      // On revient au texte libre
+      setFormRefused(false);
+      setFormAccepted(false);
+      setFormProposed(null);
+      // On garde la raison tapée (utile), tu peux la vider si tu préfères :
+      // setRefusalReason("");
+    }}
+    style={{
+      padding: "8px 12px",
+      borderRadius: 10,
+      border: "1px solid #ccc",
+      background: "#fff",
+      cursor: "pointer",
+      fontWeight: 700,
+    }}
+  >
+    Revenir au texte pour corriger
+  </button>
+
+  <button
+    onClick={async () => {
+      // On repart sur un nouveau cycle, sans obliger le visiteur à réécrire tout de suite
+      setRemarks([
+        "Nouveau formulaire : il est proposé à partir de votre texte.",
+        refusalReason.trim()
+          ? `Votre remarque a été notée : "${refusalReason.trim()}"`
+          : "Si nécessaire, précisez votre remarque.",
+      ]);
+
+      setFormRefused(false);
+      setFormAccepted(false);
+      // IMPORTANT : on relance la construction
+      await proposeForm();
+    }}
+    style={{
+      padding: "8px 12px",
+      borderRadius: 10,
+      border: "1px solid #ccc",
+      background: "#fff",
+      cursor: "pointer",
+      fontWeight: 700,
+    }}
+  >
+    Proposer un nouveau formulaire
+  </button>
+</div>
+
+
+              </div>
+            )}
           </div>
 
-          <div style={styles.actions}>
-            <button type="button" onClick={accept} style={styles.btnBlue(false)} disabled={!reformulation}>
-              Valider
-            </button>
-            <button type="button" onClick={backToEdit} style={styles.btnGray}>
-              Corriger / préciser
+          {/* Validation finale */}
+          <div style={{ marginTop: 20 }}>
+            <button
+              onClick={validate}
+              disabled={!formAccepted}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 10,
+                background: formAccepted ? "#2e7d32" : "#9e9e9e",
+                color: "#fff",
+                border: 0,
+                cursor: formAccepted ? "pointer" : "not-allowed",
+                fontWeight: 700,
+              }}
+            >
+              Valider la définition du problème
             </button>
           </div>
-
-          {debug ? (
-            <div style={styles.card}>
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>Debug auteur (interne)</div>
-              <div style={{ fontWeight: 700, marginTop: 10 }}>Formalisation interne</div>
-              <pre style={styles.mono}>{formal ? JSON.stringify(formal, null, 2) : "(vide)"}</pre>
-            </div>
-          ) : null}
-        </>
+        </div>
       )}
 
-      {step === "done" && (
-        <div style={styles.ok}>
-          <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 6 }}>OK</div>
-          <div>Définition validée (stockée localement pour ce problème V2).</div>
-
-          <div style={{ marginTop: 10 }}>
-            <strong>Texte validé :</strong>
-            <div style={{ marginTop: 6 }}>{reformulation ?? (draft.trim() || "(vide)")}</div>
-          </div>
-
-          {debug ? (
-            <div style={{ marginTop: 12 }}>
-              <strong>Formalisation interne (debug)</strong>
-              <pre style={styles.mono}>{formal ? JSON.stringify(formal, null, 2) : "(vide)"}</pre>
-            </div>
-          ) : null}
+      {/* Affichage validé */}
+      {alreadyValidated && validatedPayload && (
+        <div style={{ marginTop: 24 }}>
+          <h3>Définition validée (formulaire)</h3>
+          <pre
+            style={{
+              padding: 12,
+              borderRadius: 12,
+              background: "#f0fdf4",
+              border: "1px solid #86efac",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {JSON.stringify(validatedPayload.form, null, 2)}
+          </pre>
         </div>
       )}
     </main>

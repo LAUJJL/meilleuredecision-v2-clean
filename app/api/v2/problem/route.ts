@@ -1,139 +1,253 @@
+// app/api/v2/problem/route.ts
+
+import OpenAI from "openai";
 import { NextResponse } from "next/server";
 
-// ⚠️ En V2, on reste minimaliste :
-// - 1 appel IA : reformulation + formalisation minimale du PROBLÈME
-// - pas de vision, pas de raffinements ici
+export const runtime = "nodejs";
 
-type ReqBody = {
-  stage: "reformulate_and_formalize";
-  user_text: string;
-  context?: {
-    time_unit_preference?: "jour" | "semaine" | "mois" | "annee";
-    time_index_convention?: "0..N-1" | "1..N";
+type Kind = "problem" | "vision";
+
+type Body = {
+  kind: Kind;
+  draftText: string;
+  problem?: {
+    id?: string;
+    validatedText?: string;
+    formal?: any;
   };
-  debug?: boolean;
 };
 
-function devDebugAllowed(debugFlag: boolean) {
-  return process.env.NODE_ENV === "development" && debugFlag === true;
+function jsonError(message: string, status = 400, extra?: any) {
+  return NextResponse.json({ ok: false, error: message, ...(extra ?? {}) }, { status });
+}
+
+function tooShortOrWeak(text: string) {
+  const t = text.trim();
+  const words = t.split(/\s+/).filter(Boolean);
+  if (t.length < 80) return true;
+  if (words.length < 15) return true;
+  return false;
+}
+
+/** Ratio d’overlap (approx) pour détecter “synonymes / quasi copie” */
+function overlapRatio(a: string, b: string) {
+  const A = a
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const B = b
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (A.length === 0 || B.length === 0) return 0;
+
+  const setB = new Set(B);
+  let hit = 0;
+  for (const w of A) if (setB.has(w)) hit++;
+  return hit / A.length;
+}
+
+/** Heuristique “reformulation trop faible” */
+function isWeakReformulation(original: string, reform: string) {
+  const r = reform.trim();
+  if (r.length < 180) return true; // trop court => souvent “synonymes”
+  const ov = overlapRatio(original, r);
+  if (ov > 0.62) return true; // trop proche du texte
+  return false;
 }
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as ReqBody;
-
-    if (!body?.user_text || !body.user_text.trim()) {
-      return NextResponse.json({ error: "user_text manquant" }, { status: 400 });
+    if (!process.env.OPENAI_API_KEY) {
+      return jsonError("OPENAI_API_KEY manquante (.env.local)", 500);
     }
 
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-    if (!OPENAI_API_KEY) {
-      return NextResponse.json(
-        { error: "OPENAI_API_KEY manquante (mettez-la dans .env.local)" },
-        { status: 500 }
+    const body = (await req.json()) as Body;
+    const kind: Kind = body.kind;
+    const draftText = (body.draftText ?? "").trim();
+
+    if (!kind || (kind !== "problem" && kind !== "vision")) {
+      return jsonError("kind invalide (attendu: 'problem' ou 'vision')");
+    }
+    if (!draftText) return jsonError("Texte manquant (draftText).");
+    if (draftText.length > 8000) return jsonError("Texte trop long (max ~8000 caractères).");
+    if (tooShortOrWeak(draftText)) {
+      return jsonError(
+        "Texte trop court ou trop vague : précisez davantage votre situation et votre objectif.",
+        400,
+        { remarks: ["Ajoutez objectif, horizon, chiffres, contraintes, options."] }
       );
     }
 
-    const userText = body.user_text.trim();
-    const timePref = body.context?.time_unit_preference ?? "annee";
-    const timeIndex = body.context?.time_index_convention ?? "1..N";
+    const problemValidatedText = (body.problem?.validatedText ?? "").trim();
 
-    // Prompt minimal et stable (V2)
-    const system = [
-      "Tu es un assistant qui aide à formaliser un PROBLÈME de décision.",
-      "Tu dois produire :",
-      "1) une reformulation textuelle courte (3-6 lignes) fidèle au texte de l'utilisateur, sans jargon, avec les chiffres clés si présents.",
-      "2) une formalisation interne MINIMALE sous forme JSON avec :",
-      "- horizon_analyse (nombre) si présent ou inférable, sinon null",
-      "- unite_temps (jour|semaine|mois|annee) = préférence fournie",
-      "- convention_temps ('0..N-1' ou '1..N') = fournie",
-      "- constantes: liste d'objets { nom, valeur, unite }",
-      "- regles: liste de règles testables (texte court), sans équations",
-      "- objectif: objet minimal (texte + éventuellement cible chiffrée)",
-      "Règles :",
-      "- Ne pas inventer de nombres absents du texte.",
-      "- Si une info manque, laisser null / vide et le signaler dans 'manques'.",
-      "- JSON strict et parseable.",
-    ].join("\n");
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    // --- PROMPT : clair, contraignant, “preuve de compréhension”
+    const system = `
+Tu analyses une définition V2 écrite par un visiteur : soit un PROBLÈME, soit une VISION.
+
+Objectif : rassurer le visiteur en prouvant la compréhension.
+Tu dois produire :
+1) une reformulation robuste (pas des synonymes)
+2) des remarques logiques et utiles (si nécessaire)
+
+Règles de base (obligatoires) :
+- Fidélité : ne rien inventer, ne rien ajouter.
+- Conserver tous les faits explicites : rôle, chiffres, horizon, contraintes, options.
+- Conserver les listes d’options : ne rien supprimer.
+- Conserver la personne grammaticale : si le texte est en "je", la reformulation doit rester en "je".
+- Aucun conseil, aucune solution.
+
+Reformulation (preuve de compréhension) :
+- 4 à 6 phrases très courtes.
+- Structure imposée :
+  (1) objectif + horizon (si présent),
+  (2) situation actuelle / contexte,
+  (3) chiffres importants,
+  (4) options/alternatives listées,
+  (5) hésitation / décision à prendre.
+- Interdit : simple substitution de synonymes.
+
+Remarks (0 à 5 items) :
+- Remarques uniquement si elles sont pertinentes.
+- Types de remarques acceptées :
+  A) Ambiguïté : un élément clé est non défini (objectif/horizon/chiffres/options).
+  B) Incohérence interne : contradiction ou chiffre non compatible.
+  C) Variation PROBLÈME → VISION (si contexte fourni) :
+     - Si la VISION introduit un chiffre clé différent du PROBLÈME (capital/salaire/horizon…),
+       ajouter une remark : "À clarifier : le problème dit X, la vision dit Y. D’où vient la différence ?"
+- Ne conclus pas. Ne propose pas de solution.
+
+Si tu n’arrives pas à reformuler fidèlement sans inventer :
+- reformulation = ""
+- remarks explique ce qui manque et demande au visiteur de reformuler.
+
+Réponds STRICTEMENT en JSON, avec :
+{
+ "remarks": string[],
+ "reformulation": string,
+ "formal": object
+}
+
+formal :
+- Pour l’instant, mets toujours {} (on traitera le mini-formulaire séparément).
+`.trim();
 
     const user = [
-      "Texte utilisateur :",
-      userText,
+      kind === "problem" ? "ÉTAPE : PROBLÈME" : "ÉTAPE : VISION",
       "",
-      `Préférence unité de temps : ${timePref}`,
-      `Convention de temps : ${timeIndex}`,
+      "TEXTE SAISI :",
+      draftText,
       "",
-      "Réponds en JSON uniquement avec les clés : reformulation_text, formal_problem, manques.",
-    ].join("\n");
+      kind === "vision" && problemValidatedText
+        ? ["CONTEXTE (PROBLÈME VALIDÉ) :", problemValidatedText, ""].join("\n")
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
 
-    // Appel API OpenAI (Responses API)
-    const payload = {
-      model: "gpt-4.1-mini",
-      input: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      // On veut un JSON propre
-      text: { format: { type: "json_object" } },
-    };
+    // --- Appel IA (passage 1)
+    async function callAI(extraSystemNudge?: string) {
+      const sys = extraSystemNudge ? system + "\n\n" + extraSystemNudge : system;
 
-    const resp = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+      const resp = await client.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.1,
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: user },
+        ],
+        response_format: { type: "json_object" },
+      });
 
-    if (!resp.ok) {
-      const raw = await resp.text();
-      return NextResponse.json({ error: "OpenAI error", details: raw }, { status: 502 });
+      const output = resp.choices?.[0]?.message?.content ?? "";
+      if (!output) throw new Error("Réponse IA vide");
+      return output;
     }
 
-    const data = await resp.json();
-
-    // Extraction robuste
-    const textOut =
-      data?.output_text ??
-      (Array.isArray(data?.output)
-        ? data.output
-            .flatMap((o: any) => o?.content ?? [])
-            .map((c: any) => c?.text)
-            .filter(Boolean)
-            .join("\n")
-        : "");
-
     let parsed: any = null;
+    let raw1 = "";
+    let raw2 = "";
+
+    raw1 = await callAI();
+
     try {
-      parsed = JSON.parse(textOut);
+      parsed = JSON.parse(raw1);
     } catch {
-      return NextResponse.json(
-        { error: "Réponse IA non-JSON", output_text: textOut },
-        { status: 502 }
+      // 2e tentative (JSON)
+      raw2 = await callAI(
+        "IMPORTANT : le JSON doit être valide. Aucun texte hors JSON."
+      );
+      parsed = JSON.parse(raw2);
+    }
+
+    // Normalisation
+    const remarks = Array.isArray(parsed?.remarks) ? parsed.remarks : [];
+    const reform = (parsed?.reformulation ?? "").trim();
+    const formal = parsed?.formal ?? {};
+
+    // Si reformulation vide => on n’“interdit” pas, on demande au visiteur de reformuler
+    if (!reform) {
+      return jsonError(
+        "Je n’arrive pas à reformuler votre texte de façon fiable. Merci de le reformuler (ajoutez objectif, horizon, chiffres, options).",
+        400,
+        { remarks }
       );
     }
 
-    const debugAllowed = devDebugAllowed(body.debug === true);
+    // --- Contrôle qualité : éviter “synonymes”
+    if (isWeakReformulation(draftText, reform)) {
+      // 2e passe : on force une reformulation plus structurée / différente
+      const rawRetry = await callAI(
+        "Ta dernière reformulation était trop faible (trop courte ou trop proche du texte). Recommence en respectant strictement la structure en 4 à 6 phrases, et en reformulant réellement."
+      );
 
+      let parsedRetry: any;
+      try {
+        parsedRetry = JSON.parse(rawRetry);
+      } catch {
+        parsedRetry = null;
+      }
+
+      const reform2 = (parsedRetry?.reformulation ?? "").trim();
+      const remarks2 = Array.isArray(parsedRetry?.remarks) ? parsedRetry.remarks : remarks;
+
+      if (reform2 && !isWeakReformulation(draftText, reform2)) {
+        return NextResponse.json({
+          ok: true,
+          remarks: remarks2,
+          reformulation: reform2,
+          formal: formal ?? {},
+        });
+      }
+
+      // Si même la relance est faible : on bloque et on demande au visiteur de réécrire (plutôt que mentir)
+      return jsonError(
+        "Je n’arrive pas à produire une reformulation convaincante (trop proche du texte). Merci de reformuler votre texte (plus structuré) puis relancez l’analyse.",
+        400,
+        {
+          remarks: [
+            "Essayez : 1) objectif + horizon, 2) situation, 3) chiffres, 4) options, 5) hésitation.",
+          ],
+        }
+      );
+    }
+
+    // OK
     return NextResponse.json({
-      reformulation_text: parsed.reformulation_text ?? null,
-      formal_problem: parsed.formal_problem ?? null,
-      manques: parsed.manques ?? null,
-      debug: debugAllowed
-        ? {
-            system,
-            user,
-            model: payload.model,
-            raw_output_text: textOut,
-            raw_response_meta: {
-              id: data?.id ?? null,
-              usage: data?.usage ?? null,
-            },
-          }
-        : undefined,
+      ok: true,
+      remarks,
+      reformulation: reform,
+      formal: formal ?? {},
     });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Erreur serveur" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? "Erreur serveur" },
+      { status: 500 }
+    );
   }
 }

@@ -40,7 +40,7 @@ export default function R2ObjectifPage() {
           </a>
 
           <a
-            href="/r2"
+            href="/choisir-vision"
             style={{
               display: "inline-block",
               padding: "8px 14px",
@@ -51,7 +51,7 @@ export default function R2ObjectifPage() {
               fontSize: 14,
             }}
           >
-            ← Retour au choix R2
+            ← Retour à la liste des visions
           </a>
         </div>
 
