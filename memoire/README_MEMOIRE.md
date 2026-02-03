@@ -1,4 +1,4 @@
-# README — Mémoire du projet (V2)
+# github/meilleuredecision-v2-clean/memoire — Mémoire du projet (V2)
 
 Ce répertoire contient la mémoire écrite officielle du projet.
 
@@ -39,7 +39,7 @@ Chaque jour, en fin de séance :
 
 À chaque nouveau chat :
 
-- relire intégralement les 3 fichiers mémoire
+- relire intégralement les 4 fichiers mémoire
 - repartir uniquement de ces décisions
 - ne jamais réintroduire d’anciennes règles
 
@@ -51,3 +51,15 @@ Avant chaque redémarrage de chat :
 
 - commit + push complet du site sur GitHub
 - cela garantit qu’on ne perd jamais plus de 2 jours
+  git status
+  git add .
+  git commit -m "Checkpoint fin de journée"
+  git push
+
+  vérification finale 
+  git status  doit donner working tree clean
+
+en début de journée faire 
+taskkill /IM node.exe /F     pour tuer tous les anciens process qui tournent encore uniquement si port3000 n'est pas libre 
+npm run dev
+

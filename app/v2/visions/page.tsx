@@ -1,237 +1,272 @@
-// app/v2/visions/page.tsx
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 
-type VisionLite = {
+type VisionStatus = 'draft' | 'done';
+
+type VisionItem = {
   id: string;
-  problemId: string;
   nomCourt: string;
-  createdAt: number;
+  status: VisionStatus;
+  createdAt: string;
+  updatedAt: string;
 };
 
-const LS_V2_VISIONS_KEY = "md_v2_visions";
-const LS_V2_CURRENT_VISION_ID = "md_v2_current_vision_id";
+type ProblemItem = {
+  id: string;
+  nomCourt: string;
+  texte?: string;
+  status?: string;
+  updatedAt?: string;
+};
 
-function safeParse(raw: string | null) {
-  if (!raw) return [];
+function uid(): string {
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function safeJsonParse<T>(s: string | null): T | null {
+  if (!s) return null;
   try {
-    return JSON.parse(raw);
+    return JSON.parse(s) as T;
   } catch {
-    return [];
+    return null;
   }
 }
 
-function uid() {
-  return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
+function loadProblem(problemId: string): ProblemItem | null {
+  return safeJsonParse<ProblemItem>(localStorage.getItem(`md_v2_problem_${problemId}`));
 }
 
-export default function V2VisionsPage() {
+function loadVisions(problemId: string): VisionItem[] {
+  return safeJsonParse<VisionItem[]>(localStorage.getItem(`md_v2_visions_${problemId}`)) ?? [];
+}
+
+function saveVisions(problemId: string, visions: VisionItem[]) {
+  localStorage.setItem(`md_v2_visions_${problemId}`, JSON.stringify(visions));
+}
+
+export default function Page() {
   const router = useRouter();
   const sp = useSearchParams();
-  const problemId = sp.get("problemId") || "";
+  const problemId = sp.get('problemId') ?? '';
 
   const [ready, setReady] = useState(false);
-  const [visions, setVisions] = useState<VisionLite[]>([]);
-  const [newName, setNewName] = useState("");
+  const [problem, setProblem] = useState<ProblemItem | null>(null);
+
+  const [visions, setVisions] = useState<VisionItem[]>([]);
+  const [newName, setNewName] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Chargement
   useEffect(() => {
-    if (!problemId) {
-      setMsg("Aucun problème sélectionné.");
-      setReady(true);
-      return;
-    }
-
-    const all = safeParse(localStorage.getItem(LS_V2_VISIONS_KEY)) as VisionLite[];
-    const list = all.filter((v) => v.problemId === problemId);
-    setVisions(list);
-
+    if (!problemId) return;
+    setProblem(loadProblem(problemId));
+    setVisions(loadVisions(problemId));
     setReady(true);
   }, [problemId]);
 
-  // Création
+  const countLabel = useMemo(() => {
+    const n = visions.length;
+    return `${n} vision(s).`;
+  }, [visions.length]);
+
+  function goHome() {
+    router.push('/');
+  }
+
+  function goPrev() {
+    router.push(`/v2/probleme?problemId=${encodeURIComponent(problemId)}`);
+  }
+
   function createVision() {
     setMsg(null);
 
     const nom = newName.trim();
     if (!nom) {
-      setMsg("Veuillez saisir un nom court.");
+      setMsg('Entrez un nom court pour créer une vision.');
       return;
     }
 
-    const v: VisionLite = {
+    const now = new Date().toISOString();
+    const item: VisionItem = {
       id: uid(),
-      problemId,
       nomCourt: nom,
-      createdAt: Date.now(),
+      status: 'draft',
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const all = safeParse(localStorage.getItem(LS_V2_VISIONS_KEY)) as VisionLite[];
-    const nextAll = [v, ...all];
-
-    localStorage.setItem(LS_V2_VISIONS_KEY, JSON.stringify(nextAll));
-    localStorage.setItem(LS_V2_CURRENT_VISION_ID, v.id);
-
-    setVisions([v, ...visions]);
-    setNewName("");
+    const next = [item, ...visions];
+    setVisions(next);
+    saveVisions(problemId, next);
+    setNewName('');
   }
 
-  // Ouvrir
-  function openVision(id: string) {
-    localStorage.setItem(LS_V2_CURRENT_VISION_ID, id);
-    router.push(`/v2/vision?problemId=${encodeURIComponent(problemId)}&visionId=${encodeURIComponent(id)}`);
-  }
-
-  // Navigation
-  function goPrev() {
-    router.push(`/v2/probleme?problemId=${encodeURIComponent(problemId)}`);
-  }
-
-  function goNext() {
-    if (visions.length === 0) {
-      setMsg("Créez d’abord une vision.");
-      return;
-    }
-    openVision(visions[0].id);
+  function openVision(visionId: string) {
+    router.push(
+      `/v2/vision?problemId=${encodeURIComponent(problemId)}&visionId=${encodeURIComponent(visionId)}`
+    );
   }
 
   if (!ready) return null;
 
   return (
-    <main style={{ maxWidth: 980, margin: "0 auto", padding: 40 }}>
+    <main style={{ maxWidth: 980, margin: '0 auto', padding: 40 }}>
       {/* Bandeau standard */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 20,
-        }}
-      >
-        <Link
-          href="/"
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+        <button
+          onClick={goHome}
           style={{
-            padding: "8px 14px",
-            borderRadius: 10,
-            background: "#2e7d32",
-            color: "#fff",
-            textDecoration: "none",
+            background: '#137333',
+            color: 'white',
+            padding: '18px 28px',
+            borderRadius: 18,
+            border: 'none',
+            fontSize: 22,
             fontWeight: 700,
+            cursor: 'pointer',
           }}
         >
           Accueil
-        </Link>
+        </button>
 
         <button
-          disabled
+          onClick={() => alert('Aide : page liste / création des visions.')}
           style={{
-            padding: "8px 14px",
-            borderRadius: 10,
-            background: "#9e9e9e",
-            color: "#fff",
-            border: 0,
+            background: '#9aa0a6',
+            color: 'white',
+            padding: '18px 28px',
+            borderRadius: 18,
+            border: 'none',
+            fontSize: 22,
             fontWeight: 700,
+            cursor: 'pointer',
           }}
         >
           Aide
         </button>
 
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 16 }}>
           <button
             onClick={goPrev}
             style={{
-              padding: "8px 14px",
-              borderRadius: 10,
-              background: "#424242",
-              color: "#fff",
-              border: 0,
+              background: '#111827',
+              color: 'white',
+              padding: '18px 26px',
+              borderRadius: 18,
+              border: 'none',
+              fontSize: 22,
               fontWeight: 700,
+              cursor: 'pointer',
             }}
           >
             ← Page précédente
           </button>
-
-          <button
-            onClick={goNext}
-            style={{
-              padding: "8px 14px",
-              borderRadius: 10,
-              background: "#1976d2",
-              color: "#fff",
-              border: 0,
-              fontWeight: 700,
-            }}
-          >
-            Page suivante →
-          </button>
+          {/* Pas de Page suivante ici : la suite se fait via "Ouvrir" */}
         </div>
       </div>
 
-      <h1>V2 — Visions</h1>
+      <div style={{ marginTop: 34 }}>
+        <div style={{ fontSize: 22, opacity: 0.85 }}>V2 — Visions</div>
 
-      {msg ? <div style={{ color: "#b00020", marginTop: 10 }}>{msg}</div> : null}
+        <h2 style={{ marginTop: 28, fontSize: 28 }}>Liste des visions</h2>
+        <div style={{ marginTop: 6, fontSize: 22 }}>{countLabel}</div>
 
-      {/* Liste */}
-      <section style={{ marginTop: 20 }}>
-        <h2>Liste des visions</h2>
+        <div style={{ marginTop: 10, fontSize: 16, opacity: 0.8 }}>
+          Problème : <strong>{problem?.nomCourt ?? '(problème inconnu)'}</strong>
+        </div>
 
-        {visions.length === 0 ? (
-          <p>Aucune vision pour l’instant.</p>
-        ) : (
-          <ul>
-            {visions.map((v) => (
-              <li key={v.id} style={{ marginTop: 10 }}>
-                <button
-                  onClick={() => openVision(v.id)}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 10,
-                    border: "1px solid #ccc",
-                    cursor: "pointer",
-                  }}
-                >
-                  {v.nomCourt} →
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        {msg ? <div style={{ marginTop: 14, color: '#b00020', fontSize: 18 }}>{msg}</div> : null}
 
-        {/* Création */}
-        <div style={{ marginTop: 20 }}>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 18 }}>
           <input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Nom court de la nouvelle vision"
             style={{
-              padding: "10px",
-              width: "70%",
-              borderRadius: 10,
-              border: "1px solid #ccc",
+              flex: 1,
+              fontSize: 22,
+              padding: '16px 18px',
+              borderRadius: 16,
+              border: '1px solid #cbd5e1',
             }}
           />
-
           <button
             onClick={createVision}
             style={{
-              marginLeft: 10,
-              padding: "10px 14px",
-              borderRadius: 10,
-              background: "#1976d2",
-              color: "#fff",
-              border: 0,
-              fontWeight: 700,
-              cursor: "pointer",
+              background: '#1a73e8',
+              color: 'white',
+              padding: '16px 26px',
+              borderRadius: 16,
+              border: 'none',
+              fontSize: 24,
+              fontWeight: 800,
+              cursor: 'pointer',
             }}
           >
             Créer
           </button>
         </div>
-      </section>
+
+        <div style={{ marginTop: 24, display: 'grid', gap: 16 }}>
+          {visions.map((v) => (
+            <div
+              key={v.id}
+              style={{
+                border: '1px solid #e5e7eb',
+                borderRadius: 18,
+                padding: 22,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 18,
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 28, fontWeight: 800 }}>{v.nomCourt}</div>
+                <div style={{ marginTop: 6, fontSize: 18, opacity: 0.85 }}>
+                  {v.status === 'done' ? 'Validé' : 'Brouillon'}
+                </div>
+              </div>
+
+              <button
+                onClick={() => openVision(v.id)}
+                style={{
+                  background: '#1a73e8',
+                  color: 'white',
+                  padding: '16px 26px',
+                  borderRadius: 18,
+                  border: 'none',
+                  fontSize: 24,
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Ouvrir →
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Navigation bas de page */}
+        <div style={{ marginTop: 40, display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            onClick={goPrev}
+            style={{
+              background: '#111827',
+              color: 'white',
+              padding: '18px 26px',
+              borderRadius: 18,
+              border: 'none',
+              fontSize: 22,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            ← Page précédente
+          </button>
+        </div>
+      </div>
     </main>
   );
 }

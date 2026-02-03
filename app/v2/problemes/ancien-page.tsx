@@ -138,19 +138,6 @@ export default function V2ProblemesPage() {
         whiteSpace: "nowrap",
       } as const,
 
-      btnDarkNav: {
-        display: "inline-block",
-        padding: "10px 16px",
-        borderRadius: 12,
-        border: "1px solid #333",
-        backgroundColor: "#333",
-        color: "#fff",
-        textDecoration: "none",
-        fontSize: 16,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-      } as const,
-
       btnBlue: {
         display: "inline-block",
         padding: "10px 16px",
@@ -370,28 +357,52 @@ Vous compléterez plus tard ce texte d’aide (quoi écrire).`;
 
   return (
     <main style={styles.page}>
-      {/* Header standard (comme Visions), sans bouton "Page suivante" */}
+      {/* Ligne 1 */}
       <div style={styles.topbar}>
         <div style={styles.leftNav}>
           <Link href="/" style={styles.btnGreenNav}>
             Accueil
           </Link>
+
+          <span style={{ color: "#666" }}>Liste des problèmes</span>
         </div>
 
         <div style={styles.centerHelpRow1}>
           <button
-            style={helpMode === "free" ? styles.btnBlue : styles.btnGhost}
-            onClick={() => setHelpMode((m) => (m === "free" ? "none" : "free"))}
+            style={helpMode === "guided1" ? styles.btnBlue : styles.btnGhost}
+            onClick={() => toggle("guided1")}
           >
-            Aide
+            Problème guidé 1
+          </button>
+          <button
+            style={helpMode === "free" ? styles.btnBlue : styles.btnGhost}
+            onClick={() => toggle("free")}
+          >
+            Aide libre
           </button>
         </div>
 
-        <div style={styles.rightNav}>
-          <Link href="/" style={styles.btnDarkNav}>
-            ← Page précédente
-          </Link>
+        <div style={styles.rightNav} />
+      </div>
+
+      {/* Ligne 2 */}
+      <div style={styles.topbarRow2}>
+        <div />
+        <div style={styles.centerHelpRow2}>
+          <button
+            style={helpMode === "guided2" ? styles.btnBlue : styles.btnGhost}
+            onClick={() => toggle("guided2")}
+          >
+            Problème guidé 2
+          </button>
+          <button
+            style={helpMode === "guided3" ? styles.btnBlue : styles.btnGhost}
+            onClick={() => toggle("guided3")}
+          >
+            Problème guidé 3
+          </button>
         </div>
+        <div />
       </div>
 
       <h1 style={styles.h1}>Liste des problèmes (V2)</h1>

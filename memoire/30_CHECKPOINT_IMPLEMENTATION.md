@@ -1,6 +1,6 @@
 # 30 — CHECKPOINT IMPLEMENTATION (V2)
 
-Dernière mise à jour : 2026-01-29
+Dernière mise à jour : 2026-02-03
 
 
 ## État général
@@ -31,42 +31,12 @@ Problème → Visions → Raffinements
 
 ## Problème : état actuel
 
-Implémenté :
 
-- Texte libre
-- Bouton "Construire le mini-formulaire"
-- Formulaire proposé avec statuts :
-  (vide), GLOBAL_CONST, VISION_PARAM, VISION_KNOB
-- Acceptation obligatoire
-- Refus avec :
-  - raison courte
-  - retour texte
-  - reproposition formulaire
-
-Stockage localStorage OK.
 
 
 ## Prochaine étape immédiate
 
-Objectif :
-
-- remplacer l’ancien champ objectif “case doubler”
-- passer à objectif texte libre
-- tentative de formalisation minimale
-- en cas d’échec : message transparent + exemples simples
-
-
-## API
-
-Ancien fichier :
-
-- app/api/v2/problem/route.ts
-
-Doit être refactoré :
-
-- suppression reformulation
-- sortie = formulaire proposé ou message “non formalisable”
-
+passer aux raffinements
 
 ## Règle avant redémarrage chat
 

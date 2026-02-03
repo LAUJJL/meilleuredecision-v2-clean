@@ -3,7 +3,7 @@
 Ce fichier contient uniquement les décisions durables.
 Il sert de socle au redémarrage de chaque nouveau chat.
 
-Dernière mise à jour : 2026-01-29
+Dernière mise à jour : 2026-02-03
 
 
 ## D-01 — Méthode top-down stricte
@@ -18,7 +18,7 @@ Aucune construction bottom-up.
 Tout élément validé devient en lecture seule.
 On ne modifie jamais un problème/vision/raffinement validé.
 Toute évolution passe par une nouvelle branche ou un raffinement.
-
+Si on quitte une page sans valider, les saisies de la page sont perdues
 
 ## D-03 — V2 uniquement
 La V1 est abandonnée.
@@ -35,44 +35,22 @@ Il n’existe plus aucune reformulation affichée au visiteur.
 
 Le schéma est désormais :
 
-Texte libre → Formulaire proposé → Acceptation obligatoire
-
-La preuve de compréhension est le formulaire accepté, pas une reformulation IA.
+Texte libre  → Acceptation obligatoire
 
 
-## D-06 — Mini-formulaire obligatoire avant validation
-Aucun Problème / Vision / Raffinement ne peut être validé
-sans mini-formulaire accepté explicitement par le visiteur.
-
-Sans formulaire accepté : pas de validation, rien n’est sauvegardé.
 
 
-## D-07 — Texte non formalisable
-Si le texte ne permet pas de construire un formulaire :
 
-- le système l’explique simplement
-- il liste ce qui manque (objectif, horizon, chiffres, options)
-- il demande au visiteur de proposer un nouveau texte
-
-Transparence : pas de faux prétexte, pas de promesse miracle.
-
-
-## D-08 — Refus du formulaire
-Si le visiteur refuse le formulaire :
-
-- il doit fournir une raison courte (texte)
-- le système propose deux sorties :
-  - revenir au texte pour corriger
-  - reproposer un nouveau formulaire
 
 
 ## D-09 — Navigation standard (toutes pages)
 Chaque page comporte un bandeau fixe :
 
-- Accueil (vert)
-- Aide (placeholder, plus tard)
-- ← Page précédente
-- Page suivante →
+- Accueil (vert) en haut à gauche
+- Aide (placeholder, plus tard) en haut au milier de la page
+- ← Page précédente     en haut et en bas de page à droite
+- Page suivante →       en haut et en bas de page à droite
+Un des boutons à droite peut être supprimé s'il se cumule avec un autre bouton dans la page
 
 Les boutons correspondent à l’ordre naturel du parcours,
 pas à l’historique navigateur.
@@ -81,12 +59,12 @@ Ne pas utiliser router.back().
 
 
 ## D-10 — Transparence utilisateur
-Le site tente toujours de formaliser.
+Le site tente toujours de formaliser les raffinements.
 
 En cas d’échec, il dit la vérité :
 
-“Cette version ne sait pas encore formaliser cet objectif.
-Essayez une formulation plus simple.”
+“Cette version ne sait pas encore formaliser votre texte.
+Essayez un texte plus simple.”
 
 Les visiteurs ne sont pas des imbéciles : la transparence inspire confiance.
 
@@ -103,6 +81,6 @@ Redémarrage chat : relecture intégrale obligatoire.
 
 
 ## D-12 — Discipline anti-déconnexion
-- Nouveau chat tous les 2 jours maximum
-- Mise à jour mémoire chaque soir
+- Nouveau chat après page validée
+- Mise à jour mémoire chaque soir à partir du fichier fourre-tout enregistrant les décisions de la journée
 - GitHub push obligatoire avant redémarrage
